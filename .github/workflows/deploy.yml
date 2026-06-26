@@ -1,0 +1,102 @@
+name: Deploy DEADRECKON to Cloudflare Pages
+
+# Static deploy for the DEADRECKON land-nav app. Builds the Next.js static
+# export and publishes it to the Cloudflare Pages project serving
+# deadreckon.adamgarceau.com.
+#
+# Required repo secret:
+#   CLOUDFLARE_API_TOKEN  — token scoped to "Cloudflare Pages: Edit"
+# Optional:
+#   CLOUDFLARE_DNS_TOKEN  — token with Zone:DNS:Edit (to auto-manage the CNAME)
+# Account ID is public (not a credential) and set below.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-deadreckon
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static export
+        run: npm run build
+
+      - name: Ensure Pages project exists
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -e
+          ACCOUNT=3d2364de1180a79c2e39a6bdbf1f377c
+          resp=$(curl -sS -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/pages/projects" \
+            -H "Authorization: Bearer $CF_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"name":"azimuth-landnav","production_branch":"main"}')
+          echo "$resp" | sed 's/"id":"[^"]*"/"id":"***"/g'
+          if echo "$resp" | grep -qE '"success":[[:space:]]*true'; then
+            echo "Project created."
+          elif echo "$resp" | grep -qiE 'already|unique|exists|duplicate|8000007'; then
+            echo "Project already exists — continuing."
+          else
+            echo "::warning::Unexpected create response; proceeding to deploy."
+          fi
+
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 3d2364de1180a79c2e39a6bdbf1f377c
+          command: pages deploy out --project-name=azimuth-landnav --branch=main
+
+      - name: Attach custom domain deadreckon.adamgarceau.com
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          ACCOUNT=3d2364de1180a79c2e39a6bdbf1f377c
+          DOMAIN=deadreckon.adamgarceau.com
+          resp=$(curl -sS -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/pages/projects/azimuth-landnav/domains" \
+            -H "Authorization: Bearer $CF_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "{\"name\":\"$DOMAIN\"}")
+          echo "$resp" | sed 's/"id":"[^"]*"/"id":"***"/g'
+          if echo "$resp" | grep -qiE '"success":[[:space:]]*true|already|exists|duplicate'; then
+            echo "Custom domain $DOMAIN attached (or already present)."
+          else
+            echo "::warning::Could not attach $DOMAIN via API (token may lack DNS/zone scope). Add it once in the dashboard: Pages → azimuth-landnav → Custom domains."
+          fi
+
+      - name: Ensure DNS record for the custom domain
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_DNS_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          ZONE=d46e6bd74b99b49b43c002ebb3334f84
+          dns=$(curl -sS -X POST \
+            "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records" \
+            -H "Authorization: Bearer $CF_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"type":"CNAME","name":"deadreckon.adamgarceau.com","content":"azimuth-landnav.pages.dev","proxied":true,"comment":"DEADRECKON land-nav app (Pages)"}')
+          echo "$dns" | sed 's/"id":"[^"]*"/"id":"***"/g'
+          if echo "$dns" | grep -qiE '"success":[[:space:]]*true|already exists|81053|81057|identical'; then
+            echo "DNS CNAME present for deadreckon.adamgarceau.com."
+          else
+            echo "::warning::Could not create the CNAME (token may lack Zone:DNS:Edit). Add in DNS: CNAME deadreckon -> azimuth-landnav.pages.dev (proxied)."
+          fi

@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+:root {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+}
+
+html,
+body {
+  margin: 0;
+  background: #161c12;
+  color: #eef4e6;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Respect the iOS safe-area (notch / home indicator) when wrapped natively. */
+body {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}

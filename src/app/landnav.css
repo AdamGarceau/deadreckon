@@ -1,0 +1,127 @@
+/* Tactical / topo theme for the land-nav app — scoped under .ln-root so it
+   never bleeds into the rest of the site. */
+
+.ln-root {
+  --ln-bg: #161c12;
+  --ln-panel: #1f2719;
+  --ln-panel-2: #283322;
+  --ln-line: #3a4a30;
+  --ln-ink: #eef4e6;
+  /* Brighter muted tone for daylight/field legibility (was too low-contrast). */
+  --ln-muted: #b4c4a2;
+  --ln-od: #6b7d3f; /* olive drab accent */
+  --ln-od-bright: #9bb44e;
+  --ln-amber: #e0a400;
+  --ln-red: #d9544d;
+  --ln-blue: #6fb3d6;
+
+  background-color: var(--ln-bg);
+  background-image:
+    linear-gradient(rgba(107, 125, 63, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(107, 125, 63, 0.06) 1px, transparent 1px);
+  background-size: 26px 26px;
+  color: var(--ln-ink);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* Daylight / high-contrast mode for direct sunlight. Dark ink on a light tan
+   field reads far better in glare than the dark night theme. */
+.ln-day .ln-root {
+  --ln-bg: #e9e7d7;
+  --ln-panel: #f5f2e6;
+  --ln-panel-2: #e0ddcc;
+  --ln-line: #a9a487;
+  --ln-ink: #14180e;
+  --ln-muted: #454a36;
+  --ln-od: #54631f;
+  --ln-od-bright: #33490f;
+  --ln-amber: #8a5d00;
+  --ln-red: #a52a22;
+  --ln-blue: #1f5a76;
+  background-color: var(--ln-bg);
+  background-image:
+    linear-gradient(rgba(84, 99, 31, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(84, 99, 31, 0.08) 1px, transparent 1px);
+}
+
+.ln-mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  letter-spacing: 0.02em;
+}
+
+.ln-panel {
+  background: var(--ln-panel);
+  border: 1px solid var(--ln-line);
+  border-radius: 0.75rem;
+}
+
+.ln-panel-2 {
+  background: var(--ln-panel-2);
+  border: 1px solid var(--ln-line);
+  border-radius: 0.6rem;
+}
+
+.ln-btn {
+  background: var(--ln-od);
+  color: #0e120a;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.9rem;
+  transition: filter 0.15s ease, transform 0.05s ease;
+}
+.ln-btn:hover { filter: brightness(1.12); }
+.ln-btn:active { transform: translateY(1px); }
+.ln-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* In daylight mode a faded olive fill vanishes in sun — use a clear grey state. */
+.ln-day .ln-root .ln-btn:disabled {
+  opacity: 1;
+  background: #cdc9b6;
+  color: #7a7660;
+}
+
+.ln-btn-ghost {
+  background: transparent;
+  color: var(--ln-ink);
+  border: 1px solid var(--ln-line);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.85rem;
+  transition: background 0.15s ease;
+}
+.ln-btn-ghost:hover { background: var(--ln-panel-2); }
+
+.ln-input {
+  background: #12170e;
+  border: 1px solid var(--ln-line);
+  border-radius: 0.45rem;
+  padding: 0.5rem 0.6rem;
+  color: var(--ln-ink);
+  width: 100%;
+}
+.ln-input:focus {
+  outline: none;
+  border-color: var(--ln-od-bright);
+  box-shadow: 0 0 0 2px rgba(155, 180, 78, 0.2);
+}
+
+.ln-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ln-muted);
+  font-weight: 600;
+}
+
+.ln-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--ln-line);
+  color: var(--ln-muted);
+}
+
+.ln-stat {
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#12160e"/>
+  <!-- grid -->
+  <g stroke="#2c3a22" stroke-width="3">
+    <line x1="128" y1="40" x2="128" y2="472"/><line x1="256" y1="40" x2="256" y2="472"/><line x1="384" y1="40" x2="384" y2="472"/>
+    <line x1="40" y1="128" x2="472" y2="128"/><line x1="40" y1="256" x2="472" y2="256"/><line x1="40" y1="384" x2="472" y2="384"/>
+  </g>
+  <!-- dead-reckoning legs: dashed path with waypoint dots -->
+  <polyline points="128,400 220,300 330,330 392,200" fill="none" stroke="#6b7d3f" stroke-width="10" stroke-dasharray="4 22" stroke-linecap="round"/>
+  <g fill="#9bb44e">
+    <circle cx="128" cy="400" r="13"/>
+    <circle cx="220" cy="300" r="11"/>
+    <circle cx="330" cy="330" r="11"/>
+  </g>
+  <!-- bold heading arrow at the final leg -->
+  <g transform="translate(392,200) rotate(33)">
+    <polygon points="0,-54 26,8 0,-8 -26,8" fill="#cdd98c" stroke="#0e120a" stroke-width="3"/>
+  </g>
+  <text x="256" y="478" font-family="monospace" font-size="40" fill="#9fb08c" text-anchor="middle" font-weight="bold" letter-spacing="2">DEADRECKON</text>
+</svg>

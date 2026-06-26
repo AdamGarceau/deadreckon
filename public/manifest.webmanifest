@@ -1,0 +1,19 @@
+{
+  "name": "DEADRECKON — Land Navigation",
+  "short_name": "DEADRECKON",
+  "description": "Navigate when the signal dies. Field land navigation with a photographed topographic map: digital protractor, grid/magnetic azimuths, MGRS coordinates, waypoint navigation, terrain reading, live compass and GPS.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#12160e",
+  "theme_color": "#12160e",
+  "icons": [
+    {
+      "src": "/deadreckon-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

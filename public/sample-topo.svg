@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800" width="1000" height="800">
+  <rect width="1000" height="800" fill="#f4efe2"/>
+  <!-- contour-ish terrain -->
+  <g fill="none" stroke="#b08a5a" stroke-width="1.5" opacity="0.85">
+    <path d="M250 500 C 350 420, 520 430, 600 520 C 660 590, 560 660, 450 640 C 330 620, 200 600, 250 500 Z"/>
+    <path d="M300 510 C 370 460, 500 470, 560 530 C 600 580, 530 620, 450 610 C 360 600, 280 580, 300 510 Z"/>
+    <path d="M350 520 C 400 490, 480 495, 520 535 C 545 565, 500 590, 450 585 C 395 580, 330 560, 350 520 Z"/>
+    <path d="M700 150 C 780 180, 820 260, 770 320 C 730 365, 650 340, 640 270 C 632 215, 650 165, 700 150 Z"/>
+    <path d="M715 185 C 765 210, 790 260, 755 300 C 725 330, 675 312, 670 268 C 666 230, 680 198, 715 185 Z"/>
+  </g>
+  <!-- a drainage / stream -->
+  <path d="M80 120 C 250 200, 300 360, 480 430 C 640 492, 780 520, 940 700" fill="none" stroke="#5a86b0" stroke-width="3" opacity="0.8"/>
+  <!-- a road -->
+  <path d="M40 660 L 980 540" fill="none" stroke="#9a5a4a" stroke-width="3" stroke-dasharray="2 6" opacity="0.8"/>
+  <!-- UTM grid lines every 100 px = 100 m -->
+  <g stroke="#3a6a3a" stroke-width="1" opacity="0.55">
+    <line x1="100" y1="0" x2="100" y2="800"/><line x1="200" y1="0" x2="200" y2="800"/>
+    <line x1="300" y1="0" x2="300" y2="800"/><line x1="400" y1="0" x2="400" y2="800"/>
+    <line x1="500" y1="0" x2="500" y2="800"/><line x1="600" y1="0" x2="600" y2="800"/>
+    <line x1="700" y1="0" x2="700" y2="800"/><line x1="800" y1="0" x2="800" y2="800"/>
+    <line x1="900" y1="0" x2="900" y2="800"/>
+    <line x1="0" y1="100" x2="1000" y2="100"/><line x1="0" y1="200" x2="1000" y2="200"/>
+    <line x1="0" y1="300" x2="1000" y2="300"/><line x1="0" y1="400" x2="1000" y2="400"/>
+    <line x1="0" y1="500" x2="1000" y2="500"/><line x1="0" y1="600" x2="1000" y2="600"/>
+    <line x1="0" y1="700" x2="1000" y2="700"/>
+  </g>
+  <!-- grid value labels (easting along bottom, northing along left) -->
+  <g fill="#3a6a3a" font-family="monospace" font-size="14" opacity="0.85">
+    <text x="104" y="792">71</text><text x="504" y="792">75</text><text x="904" y="792">79</text>
+    <text x="4" y="696">60</text><text x="4" y="296">64</text><text x="4" y="104">66</text>
+  </g>
+  <!-- north arrow -->
+  <g transform="translate(940,70)">
+    <line x1="0" y1="30" x2="0" y2="-30" stroke="#222" stroke-width="2"/>
+    <polygon points="0,-34 6,-20 -6,-20" fill="#222"/>
+    <text x="-5" y="-40" font-family="monospace" font-size="16" fill="#222">N</text>
+  </g>
+  <text x="20" y="34" font-family="sans-serif" font-size="20" fill="#444" font-weight="bold">SAMPLE QUAD — demo</text>
+  <text x="20" y="56" font-family="monospace" font-size="13" fill="#666">1:24,000 · grid 100 m · WGS84 · zone 12S</text>
+</svg>
