@@ -8,10 +8,14 @@ import {
   formatMeters,
   gridAzimuthDistance,
   gridToMagnetic,
+  haversine,
+  initialBearing,
   latLonToMGRS,
   latLonToUTM,
+  norm360,
   parseMGRS,
   utmToLatLon,
+  type LatLon,
   type UTM,
 } from "@/lib/landnav/coords";
 import {
@@ -81,6 +85,7 @@ export default function MapPage() {
   const [pending, setPending] = useState<Pixel | null>(null);
   const [entering, setEntering] = useState<Pixel | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [following, setFollowing] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const watchId = useRef<number | null>(null);
@@ -443,6 +448,44 @@ export default function MapPage() {
         })
       : [];
 
+  // Real-world position of the objective (2nd measure point) and the live GPS,
+  // used to slave a live compass to the bearing you just measured.
+  const objectiveLL: LatLon | null =
+    transform && measure.length === 2
+      ? (() => {
+          const w = pixelToWorld(transform, measure[1]);
+          return utmToLatLon({
+            zone: DEFAULT_REGION.utmZone,
+            hemisphere: "N",
+            easting: w.easting,
+            northing: w.northing,
+          });
+        })()
+      : null;
+  const gpsLL: LatLon | null = gpsWorld
+    ? utmToLatLon({
+        zone: DEFAULT_REGION.utmZone,
+        hemisphere: "N",
+        easting: gpsWorld.easting,
+        northing: gpsWorld.northing,
+      })
+    : null;
+
+  // Open the live "walk it" compass: get orientation permission (iOS needs the
+  // gesture), make sure GPS is live so distance counts down, then show it.
+  async function openFollow() {
+    const doe = DeviceOrientationEvent as unknown as {
+      requestPermission?: () => Promise<string>;
+    };
+    try {
+      if (doe && typeof doe.requestPermission === "function") await doe.requestPermission();
+    } catch {
+      /* heading is optional — the magnetic bearing still shows */
+    }
+    if (watchId.current == null) toggleGps();
+    setFollowing(true);
+  }
+
   // Hazards within a corridor (~60 m) of the measured azimuth line.
   const hazardWarnings: string[] = [];
   if (measureResult && transform) {
@@ -772,11 +815,16 @@ export default function MapPage() {
 
           {/* measurement result */}
           {measureResult && (
-            <MeasurePanel
-              azimuth={measureResult.azimuth}
-              distance={measureResult.distance}
-              declination={declination}
-            />
+            <>
+              <MeasurePanel
+                azimuth={measureResult.azimuth}
+                distance={measureResult.distance}
+                declination={declination}
+              />
+              <button className="ln-btn w-full flex items-center justify-center gap-2" onClick={openFollow}>
+                <span aria-hidden>🧭</span> Follow on compass — walk this azimuth
+              </button>
+            </>
           )}
 
           {/* control point list */}
@@ -858,9 +906,145 @@ export default function MapPage() {
         </div>
       )}
 
+      {following && objectiveLL && (
+        <FollowCompass
+          objective={objectiveLL}
+          objectiveLabel={latLonToMGRS(objectiveLL.lat, objectiveLL.lon, 5)}
+          gps={gpsLL}
+          gridAzimuth={measureResult?.azimuth ?? 0}
+          declination={declination}
+          onClose={() => setFollowing(false)}
+        />
+      )}
+
       {show3D && src && mapBox && (
         <Terrain3D src={src} box={mapBox} onClose={() => setShow3D(false)} />
       )}
+    </div>
+  );
+}
+
+// Live "walk it" compass: slaves a needle to the azimuth you measured on the map.
+// With live GPS it recomputes the bearing + distance to the objective as you move;
+// without it, it falls back to the fixed magnetic bearing off the map line.
+function FollowCompass({
+  objective,
+  objectiveLabel,
+  gps,
+  gridAzimuth,
+  declination,
+  onClose,
+}: {
+  objective: LatLon;
+  objectiveLabel: string;
+  gps: LatLon | null;
+  gridAzimuth: number;
+  declination: number;
+  onClose: () => void;
+}) {
+  const [heading, setHeading] = useState<number | null>(null);
+
+  useEffect(() => {
+    function handle(e: DeviceOrientationEvent & { webkitCompassHeading?: number }) {
+      let h: number | null = null;
+      if (typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;
+      else if (typeof e.alpha === "number") h = norm360(360 - e.alpha);
+      if (h != null) setHeading(h);
+    }
+    window.addEventListener("deviceorientationabsolute", handle as EventListener);
+    window.addEventListener("deviceorientation", handle as EventListener);
+    return () => {
+      window.removeEventListener("deviceorientationabsolute", handle as EventListener);
+      window.removeEventListener("deviceorientation", handle as EventListener);
+    };
+  }, []);
+
+  // Bearing to the objective: live off GPS if we have it, else the fixed map line.
+  let magBearing: number;
+  let distance: number | null = null;
+  let live = false;
+  if (gps) {
+    const trueBearing = initialBearing(gps, objective);
+    magBearing = norm360(trueBearing - DEFAULT_REGION.declination);
+    distance = haversine(gps, objective);
+    live = true;
+  } else {
+    magBearing = gridToMagnetic(gridAzimuth, declination);
+  }
+  const hasHeading = heading != null;
+  // How far to turn: 0 = objective is straight ahead (top of phone).
+  const arrow = hasHeading ? norm360(magBearing - heading) : magBearing;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-[var(--ln-bg,#0e120a)] flex flex-col items-center p-5 overflow-y-auto">
+      <div className="w-full max-w-md flex items-center justify-between">
+        <h2 className="font-semibold text-lg">Walk to objective</h2>
+        <button className="ln-btn-ghost" onClick={onClose}>Close</button>
+      </div>
+
+      <div
+        className="w-full max-w-md ln-panel p-2 text-center text-sm font-semibold mt-3"
+        style={{
+          color: hasHeading ? "var(--ln-od-bright)" : "var(--ln-amber)",
+          borderColor: hasHeading ? "var(--ln-od)" : "var(--ln-amber)",
+        }}
+      >
+        {hasHeading
+          ? "● LIVE HEADING — turn until the arrow points straight up"
+          : "▲ NO COMPASS SENSOR — set the magnetic bearing below on a compass"}
+      </div>
+
+      <div className="relative w-72 h-72 my-6">
+        <div className="absolute inset-0 rounded-full border-2 border-[var(--ln-line)] bg-[var(--ln-panel-2)]" />
+        <div className="absolute left-1/2 top-2 -translate-x-1/2 text-[var(--ln-amber)]">▲</div>
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{ transform: `rotate(${arrow}deg)`, transition: "transform 0.15s ease-out" }}
+        >
+          <svg viewBox="0 0 100 100" className="w-48 h-48">
+            <polygon points="50,8 70,60 50,48 30,60" fill="var(--ln-od-bright)" />
+            <rect x="46" y="48" width="8" height="40" rx="3" fill="var(--ln-od)" />
+          </svg>
+        </div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-24">
+          <div className="text-3xl font-bold ln-mono ln-stat">
+            {distance != null ? formatMeters(distance) : "—"}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 w-full max-w-md text-center">
+        <div className="ln-panel-2 p-2">
+          <div className="ln-label">Magnetic</div>
+          <div className="ln-mono ln-stat text-lg text-[var(--ln-amber)]">{Math.round(magBearing)}°</div>
+        </div>
+        <div className="ln-panel-2 p-2">
+          <div className="ln-label">Direction</div>
+          <div className="ln-mono ln-stat text-lg">{compassPoint(magBearing)}</div>
+        </div>
+        <div className="ln-panel-2 p-2">
+          <div className="ln-label">{live ? "Distance" : "Heading"}</div>
+          <div className="ln-mono ln-stat text-lg">
+            {live ? (distance != null ? formatMeters(distance) : "—") : hasHeading ? `${Math.round(heading!)}°` : "—"}
+          </div>
+        </div>
+      </div>
+
+      <div className="w-full max-w-md ln-panel-2 p-2 text-center mt-3">
+        <div className="ln-label">Objective</div>
+        <div className="ln-mono text-sm break-all">{objectiveLabel}</div>
+      </div>
+
+      {!live && (
+        <p className="text-[11px] text-[var(--ln-amber)] mt-3 text-center max-w-md">
+          GPS is off, so distance can&apos;t count down. Turn on <strong>Plot my GPS</strong> for
+          live guidance, or set {Math.round(magBearing)}° on your compass and follow it.
+        </p>
+      )}
+      <p className="text-[11px] text-[var(--ln-muted)] mt-2 text-center max-w-md">
+        Hold the phone flat, away from metal. Phone compasses drift 10–20° — confirm
+        against a lensatic compass before you rely on it.
+      </p>
     </div>
   );
 }
