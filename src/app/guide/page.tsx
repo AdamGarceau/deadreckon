@@ -70,7 +70,7 @@ export default function GuidePage() {
         <p className="text-[var(--ln-muted)]">
           In Southern Utah magnetic north is east (right) of grid north, so you{" "}
           <strong>subtract</strong> ~11° going grid→magnetic. The{" "}
-          <Link href="/compass" className="underline text-[var(--ln-blue)]">Compass tab</Link>{" "}
+          <Link href="/coordinates" className="underline text-[var(--ln-blue)]">Tools ▸ Compass</Link>{" "}
           does this for you.
         </p>
       </Section>

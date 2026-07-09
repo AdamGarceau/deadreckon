@@ -15,6 +15,7 @@ import {
   type LatLon,
 } from "@/lib/landnav/coords";
 import { DEFAULT_REGION } from "@/lib/landnav/region";
+import { useGmAngle, gmToTrueDeclination } from "@/lib/landnav/useGmAngle";
 import NumberField from "../NumberField";
 
 interface Waypoint {
@@ -50,7 +51,7 @@ export default function NavigatePage() {
   const [name, setName] = useState("");
   const [coord, setCoord] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [declination, setDeclination] = useState(DEFAULT_REGION.declination);
+  const [gm, setGm] = useGmAngle();
   const [tab, setTab] = useState<"waypoints" | "dr">("waypoints");
 
   const [navigating, setNavigating] = useState(false);
@@ -179,7 +180,7 @@ export default function NavigatePage() {
   let arrow = 0;
   if (navigating && fix && target) {
     trueBearing = initialBearing(fix, target);
-    magBearing = norm360(trueBearing - declination);
+    magBearing = norm360(trueBearing - gmToTrueDeclination(gm));
     distance = haversine(fix, target);
     arrow = heading != null ? norm360(magBearing - heading) : magBearing;
   }
@@ -294,8 +295,13 @@ export default function NavigatePage() {
       <div>
         <h1 className="text-2xl font-bold">Go To</h1>
         <p className="text-[var(--ln-muted)] text-sm mt-1">
-          Follow an arrow to your waypoints, or dead-reckon a position by azimuth
+          <strong>Type coordinates</strong> you were given — a radio call, briefing, or
+          mission packet — then follow the arrow. Or dead-reckon a position by azimuth
           and distance with no GPS at all.
+        </p>
+        <p className="text-[11px] text-[var(--ln-muted)] mt-1">
+          Plotting off your paper map instead? Use <strong>Map → Route</strong> to tap
+          waypoints straight onto it.
         </p>
       </div>
 
@@ -308,7 +314,7 @@ export default function NavigatePage() {
         </button>
       </div>
 
-      {tab === "dr" && <DeadReckon declination={declination} setDeclination={setDeclination} />}
+      {tab === "dr" && <DeadReckon gm={gm} setGm={setGm} />}
       {tab === "waypoints" && (
       <>
       <div>
@@ -377,8 +383,8 @@ export default function NavigatePage() {
           ))}
 
           <label className="flex items-center gap-2 pt-2">
-            <span className="ln-label">Declination (° east +)</span>
-            <NumberField className="ln-input ln-mono w-20" value={declination} onChange={setDeclination} ariaLabel="declination" />
+            <span className="ln-label">G-M angle (° east +)</span>
+            <NumberField className="ln-input ln-mono w-20" value={gm} onChange={setGm} ariaLabel="G-M angle" />
           </label>
 
           <button className="ln-btn w-full mt-2" onClick={startNav}>
@@ -409,7 +415,7 @@ interface Leg {
   dist: number;
 }
 
-function DeadReckon({ declination, setDeclination }: { declination: number; setDeclination: (d: number) => void }) {
+function DeadReckon({ gm, setGm }: { gm: number; setGm: (v: number) => void }) {
   const [startStr, setStartStr] = useState("");
   const [start, setStart] = useState<LatLon | null>(null);
   const [legs, setLegs] = useState<Leg[]>([]);
@@ -487,7 +493,7 @@ function DeadReckon({ declination, setDeclination }: { declination: number; setD
     points.push({ pos: start });
     let cur = start;
     for (const leg of legs) {
-      const gridAz = leg.azType === "mag" ? magneticToGrid(leg.az, declination) : leg.az;
+      const gridAz = leg.azType === "mag" ? magneticToGrid(leg.az, gm) : leg.az;
       cur = deadReckon(cur, gridAz, leg.dist);
       points.push({ pos: cur, leg });
     }
@@ -530,7 +536,7 @@ function DeadReckon({ declination, setDeclination }: { declination: number; setD
         {azType === "mag" && (
           <label className="flex items-center gap-2">
             <span className="ln-label">G-M angle (° east +) for this AO</span>
-            <NumberField className="ln-input ln-mono w-20" value={declination} onChange={setDeclination} ariaLabel="G-M angle" />
+            <NumberField className="ln-input ln-mono w-20" value={gm} onChange={setGm} ariaLabel="G-M angle" />
           </label>
         )}
         <div className="grid grid-cols-2 gap-2">
@@ -592,12 +598,12 @@ function DeadReckon({ declination, setDeclination }: { declination: number; setD
             <summary className="ln-label cursor-pointer">Return route (back to start)</summary>
             <div className="mt-2 space-y-1">
               {[...legs].reverse().map((l, i) => {
-                const gridAz = l.azType === "mag" ? magneticToGrid(l.az, declination) : l.az;
+                const gridAz = l.azType === "mag" ? magneticToGrid(l.az, gm) : l.az;
                 const backGrid = norm360(gridAz + 180);
                 return (
                   <div key={l.id} className="text-sm ln-mono flex justify-between">
                     <span>Back {i + 1}: grid {backGrid.toFixed(0)}° / {formatMeters(l.dist)}</span>
-                    <span className="text-[var(--ln-muted)]">mag {norm360(backGrid - declination).toFixed(0)}°</span>
+                    <span className="text-[var(--ln-muted)]">mag {norm360(backGrid - gm).toFixed(0)}°</span>
                   </div>
                 );
               })}

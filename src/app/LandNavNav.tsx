@@ -32,8 +32,7 @@ const TABS = [
   { href: "/", label: "Home", icon: "M3 12l9-9 9 9M5 10v10h14V10" },
   { href: "/map", label: "Map", icon: "M9 3l6 2 6-2v16l-6 2-6-2-6 2V5z M9 3v16 M15 5v16" },
   { href: "/navigate", label: "Go To", icon: "M3 11l18-8-8 18-2-8-8-2z" },
-  { href: "/compass", label: "Compass", icon: "M12 2a10 10 0 100 20 10 10 0 000-20z M16 8l-2.5 5.5L8 16l2.5-5.5z" },
-  { href: "/coordinates", label: "Coords", icon: "M12 2v20 M2 12h20 M12 12m-3 0a3 3 0 106 0 3 3 0 10-6 0" },
+  { href: "/coordinates", label: "Tools", icon: "M12 2v20 M2 12h20 M12 12m-3 0a3 3 0 106 0 3 3 0 10-6 0" },
   { href: "/guide", label: "Guide", icon: "M4 4h11a3 3 0 013 3v13H7a3 3 0 00-3 3z M4 4v16" },
 ];
 
@@ -71,7 +70,7 @@ export default function LandNavNav() {
 
       {/* Bottom tab bar (thumb-reachable in the field) */}
       <nav className="ln-tabbar fixed bottom-0 inset-x-0 z-40 border-t border-[var(--ln-line)] bg-[var(--ln-panel)]/97 backdrop-blur">
-        <div className="max-w-5xl mx-auto grid grid-cols-6">
+        <div className="max-w-5xl mx-auto grid grid-cols-5">
           {TABS.map((t) => {
             const active = isActive(t.href);
             return (

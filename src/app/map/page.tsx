@@ -32,6 +32,7 @@ import {
 import { DEFAULT_REGION } from "@/lib/landnav/region";
 import { analyzeTerrain, type TerrainAnalysis } from "@/lib/landnav/terrain";
 import { type LatLonBox } from "@/lib/landnav/elevation";
+import { useGmAngle, setGmAngle } from "@/lib/landnav/useGmAngle";
 import Terrain3D from "./Terrain3D";
 import NumberField from "../NumberField";
 
@@ -83,7 +84,7 @@ export default function MapPage() {
   const [show3D, setShow3D] = useState(false);
   const [gpsWorld, setGpsWorld] = useState<{ easting: number; northing: number; acc: number } | null>(null);
   const [gpsActive, setGpsActive] = useState(false);
-  const [declination, setDeclination] = useState(DEFAULT_REGION.gmAngle);
+  const [declination, setDeclination] = useGmAngle();
   const [view, setView] = useState<View>({ scale: 1, tx: 0, ty: 0 });
   const [pending, setPending] = useState<Pixel | null>(null);
   const [entering, setEntering] = useState<Pixel | null>(null);
@@ -136,7 +137,14 @@ export default function MapPage() {
         setControl(saved.control || []);
         setHazards(saved.hazards || []);
         setRoute(saved.route || []);
-        if (typeof saved.declination === "number") setDeclination(saved.declination);
+        // One-time migration only: never let an old saved map clobber the shared
+        // G-M angle on every visit (that would undo a value set elsewhere).
+        if (
+          typeof saved.declination === "number" &&
+          localStorage.getItem("deadreckon.gmAngle") == null
+        ) {
+          setGmAngle(saved.declination);
+        }
         setMode("measure");
       }
     } catch {
@@ -625,6 +633,13 @@ export default function MapPage() {
                 {verdict.label}
               </span>
             </div>
+            {mode === "route" && (
+              <p className="text-[11px] text-[var(--ln-muted)]">
+                <strong className="text-[var(--ln-od-bright)]">Visual planning</strong> —
+                plot a route by tapping waypoints on your map. Handed coordinates over the
+                radio or in a briefing instead? Type them in <strong>Go To</strong>.
+              </p>
+            )}
             {mode === "hazard" && (
               <div className="flex flex-wrap gap-1.5">
                 {(Object.keys(HAZARD_META) as HazardType[]).map((t) => (
@@ -1007,7 +1022,6 @@ export default function MapPage() {
               ariaLabel="G-M angle"
               onChange={(v) => {
                 setDeclination(v);
-                persist({ declination: v });
               }}
             />
             <span className="text-xs text-[var(--ln-muted)]">
