@@ -304,7 +304,9 @@ export default function MapPage() {
     if (!g) return;
     const pts = [...pointers.current.values()];
     const movedDist = Math.hypot(e.clientX - g.downPt.x, e.clientY - g.downPt.y);
-    if (movedDist > 6) g.moved = true;
+    // Fingers jitter a few px on a "tap." Only treat clear drags as pans, so a
+    // real objective tap on a phone isn't silently swallowed as a pan.
+    if (movedDist > 12) g.moved = true;
 
     const rect = containerRef.current!.getBoundingClientRect();
     if (pts.length === 2) {
@@ -336,7 +338,7 @@ export default function MapPage() {
   function onPointerUp(e: React.PointerEvent) {
     const g = gesture.current;
     pointers.current.delete(e.pointerId);
-    if (g && !g.moved && e.timeStamp - g.downAt < 350 && pointers.current.size === 0) {
+    if (g && !g.moved && e.timeStamp - g.downAt < 500 && pointers.current.size === 0) {
       handleTap(screenToImage(e.clientX, e.clientY));
     }
     if (pointers.current.size === 0) gesture.current = null;
@@ -420,6 +422,26 @@ export default function MapPage() {
     const { azimuth, distance } = gridAzimuthDistance(wa, wb);
     measureResult = { azimuth, distance, a: measure[0], b: measure[1] };
   }
+
+  // Coordinates of each tapped point, so a tap after calibration immediately
+  // reads back a grid (MGRS + UTM) — start first, then objective.
+  const tappedCoords =
+    transform && measure.length
+      ? measure.map((p) => {
+          const w = pixelToWorld(transform, p);
+          const ll = utmToLatLon({
+            zone: DEFAULT_REGION.utmZone,
+            hemisphere: "N",
+            easting: w.easting,
+            northing: w.northing,
+          });
+          return {
+            mgrs: latLonToMGRS(ll.lat, ll.lon, 5),
+            easting: Math.round(w.easting),
+            northing: Math.round(w.northing),
+          };
+        })
+      : [];
 
   // Hazards within a corridor (~60 m) of the measured azimuth line.
   const hazardWarnings: string[] = [];
@@ -650,6 +672,38 @@ export default function MapPage() {
               </button>
             )}
           </div>
+
+          {/* tapped-point coordinates — immediate read-back after calibration */}
+          {tappedCoords.length > 0 && (
+            <div className="ln-panel p-4 space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h3 className="font-semibold">Tapped point{tappedCoords.length > 1 ? "s" : ""}</h3>
+                <button className="ln-btn-ghost text-sm" onClick={() => setMeasure([])}>
+                  Clear
+                </button>
+              </div>
+              {tappedCoords.map((c, i) => {
+                const role =
+                  tappedCoords.length === 1 ? "Point" : i === 0 ? "Start" : "Objective";
+                return (
+                  <div key={i} className="ln-panel-2 px-3 py-2">
+                    <div className="ln-label">
+                      <span className="text-[var(--ln-od-bright)]">{role}</span>
+                    </div>
+                    <div className="ln-mono ln-stat text-base break-all">{c.mgrs}</div>
+                    <div className="ln-mono text-xs text-[var(--ln-muted)]">
+                      {c.easting} E · {c.northing} N · {DEFAULT_REGION.mgrsGridZone}
+                    </div>
+                  </div>
+                );
+              })}
+              {measure.length === 1 && (
+                <p className="text-[11px] text-[var(--ln-muted)]">
+                  Tap your objective for the azimuth, back-azimuth, and distance from here.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* terrain reading */}
           <div className="ln-panel p-4 space-y-3">
