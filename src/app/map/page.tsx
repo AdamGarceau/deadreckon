@@ -12,6 +12,7 @@ import {
   initialBearing,
   latLonToMGRS,
   latLonToUTM,
+  mgrsPrecisionForAccuracy,
   norm360,
   parseMGRS,
   utmToLatLon,
@@ -487,6 +488,13 @@ export default function MapPage() {
       })
     : null;
 
+  // Live "you are here" grid, always shown on the map so you never leave the
+  // page to read your position. Precision is capped to the fix accuracy.
+  const currentMGRS =
+    gpsLL && gpsWorld
+      ? latLonToMGRS(gpsLL.lat, gpsLL.lon, mgrsPrecisionForAccuracy(gpsWorld.acc))
+      : null;
+
   // The marked route as real-world targets (in tapped order) for sequential nav.
   const routeTargets: { ll: LatLon; label: string }[] =
     transform && route.length
@@ -778,6 +786,30 @@ export default function MapPage() {
                 ? "Tap start, then objective"
                 : "Calibrate first"}
             </div>
+          </div>
+
+          {/* live "you are here" grid — always on the map page */}
+          <div className="ln-panel px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <span className="ln-label">You are here (live)</span>
+              {currentMGRS ? (
+                <div className="ln-mono ln-stat text-base break-all text-[var(--ln-od-bright)]">
+                  {currentMGRS}
+                </div>
+              ) : (
+                <div className="text-sm text-[var(--ln-muted)]">
+                  Tap <strong>Plot my GPS</strong> to show your live grid.
+                </div>
+              )}
+            </div>
+            {gpsWorld && (
+              <span
+                className="ln-chip shrink-0"
+                style={{ color: gpsWorld.acc <= 10 ? "var(--ln-od-bright)" : "var(--ln-amber)", borderColor: gpsWorld.acc <= 10 ? "var(--ln-od)" : "var(--ln-amber)" }}
+              >
+                ±{Math.round(gpsWorld.acc)} m{transform && !gpsPixel ? " · off sheet" : ""}
+              </span>
+            )}
           </div>
 
           {/* action row */}

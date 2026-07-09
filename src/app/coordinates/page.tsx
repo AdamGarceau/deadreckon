@@ -8,11 +8,13 @@ import {
   backAzimuth,
   compassPoint,
   degreesToMils,
+  haversine,
   latLonToMGRS,
   latLonToUTM,
   mgrsPrecisionForAccuracy,
   parseMGRS,
   utmToLatLon,
+  type LatLon,
   type UTM,
 } from "@/lib/landnav/coords";
 import { DEFAULT_REGION } from "@/lib/landnav/region";
@@ -411,6 +413,90 @@ function PaceCount() {
     setCalPaces(String(Math.round(autoSteps / 2)));
   }
 
+  // --- auto-calibrate by WALKING: divide paces by the GPS distance covered, so
+  // you get your paces/100 m from any natural walk without pacing off a measured
+  // course. Accelerometer counts the footfalls; GPS sums the ground distance. ---
+  const [walking, setWalking] = useState(false);
+  const [walkSteps, setWalkSteps] = useState(0);
+  const [walkDist, setWalkDist] = useState(0);
+  const [walkErr, setWalkErr] = useState<string | null>(null);
+  const walkStopRef = useRef<(() => void) | null>(null);
+  const walkWatchRef = useRef<number | null>(null);
+  const prevFixRef = useRef<LatLon | null>(null);
+
+  useEffect(
+    () => () => {
+      walkStopRef.current?.();
+      if (walkWatchRef.current != null) navigator.geolocation.clearWatch(walkWatchRef.current);
+    },
+    [],
+  );
+
+  async function toggleWalk() {
+    if (walking) {
+      walkStopRef.current?.();
+      walkStopRef.current = null;
+      if (walkWatchRef.current != null) {
+        navigator.geolocation.clearWatch(walkWatchRef.current);
+        walkWatchRef.current = null;
+      }
+      prevFixRef.current = null;
+      setWalking(false);
+      const paces = walkSteps / 2;
+      if (walkDist >= 20 && paces > 0) {
+        const per100 = (paces / walkDist) * 100;
+        setPacesPer100(per100);
+        try {
+          localStorage.setItem("deadreckon.pace.per100", String(per100));
+        } catch {
+          /* ignore */
+        }
+      } else {
+        setWalkErr("Walk at least ~50 m in a straight line for a good average.");
+      }
+      return;
+    }
+    const ok = await requestMotionPermission();
+    if (!ok) {
+      setWalkErr("Motion sensor unavailable or permission denied on this device.");
+      return;
+    }
+    if (!("geolocation" in navigator)) {
+      setWalkErr("GPS not available on this device.");
+      return;
+    }
+    setWalkErr(null);
+    setWalkSteps(0);
+    setWalkDist(0);
+    prevFixRef.current = null;
+    walkStopRef.current = startPedometer(() => setWalkSteps((s) => s + 1));
+    walkWatchRef.current = navigator.geolocation.watchPosition(
+      (p) => {
+        const cur: LatLon = { lat: p.coords.latitude, lon: p.coords.longitude };
+        const prev = prevFixRef.current;
+        if (!prev) {
+          prevFixRef.current = cur;
+          return;
+        }
+        const seg = haversine(prev, cur);
+        // Ignore stationary jitter (<0.8 m); reset the baseline after a GPS jump
+        // (>40 m) without counting it; only accumulate clean, in-range segments.
+        if (seg > 40) {
+          prevFixRef.current = cur;
+        } else if (seg >= 0.8 && p.coords.accuracy <= 25) {
+          setWalkDist((d) => d + seg);
+          prevFixRef.current = cur;
+        }
+      },
+      (e) => setWalkErr(e.message),
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 },
+    );
+    setWalking(true);
+  }
+
+  const walkPaces = walkSteps / 2;
+  const walkPer100Live = walkDist >= 5 && walkPaces > 0 ? (walkPaces / walkDist) * 100 : null;
+
   const distFromCount = pacesPer100 ? (count / pacesPer100) * 100 : null;
   // Auto distance: steps/2 = paces, then apply pace calibration.
   const autoDist = pacesPer100 ? (autoSteps / 2 / pacesPer100) * 100 : null;
@@ -442,6 +528,31 @@ function PaceCount() {
           </div>
         </div>
       )}
+
+      {/* Auto-calibrate by walking (GPS distance ÷ paces) */}
+      <div className="border-t border-[var(--ln-line)] pt-4">
+        <div className="flex items-center justify-between mb-2 gap-3">
+          <div>
+            <span className="ln-label">Auto-calibrate by walking (GPS)</span>
+            <div className="ln-mono ln-stat text-2xl">
+              {Math.round(walkPaces)} <span className="text-base text-[var(--ln-muted)]">paces</span>
+            </div>
+            <div className="text-sm text-[var(--ln-muted)]">
+              {formatMeters(walkDist)} walked
+              {walkPer100Live != null ? ` · ≈ ${walkPer100Live.toFixed(0)} paces/100 m` : ""}
+            </div>
+          </div>
+          <button className={walking ? "ln-btn shrink-0" : "ln-btn-ghost shrink-0"} onClick={toggleWalk}>
+            {walking ? "Stop & set" : "Start walking"}
+          </button>
+        </div>
+        {walkErr && <p className="text-xs text-[var(--ln-red)] mt-1">{walkErr}</p>}
+        <p className="text-[11px] text-[var(--ln-muted)] mt-1">
+          Walk a straight ~100 m at your natural pace with GPS on, then Stop &amp; set.
+          It divides your paces by the GPS distance to find your paces-per-100 m
+          automatically — no measured course needed. Open sky gives the best fix.
+        </p>
+      </div>
 
       {/* Automatic step counting */}
       <div className="border-t border-[var(--ln-line)] pt-4">
