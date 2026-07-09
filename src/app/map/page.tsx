@@ -34,7 +34,7 @@ import { type LatLonBox } from "@/lib/landnav/elevation";
 import Terrain3D from "./Terrain3D";
 import NumberField from "../NumberField";
 
-type Mode = "calibrate" | "measure" | "hazard";
+type Mode = "calibrate" | "measure" | "route" | "hazard";
 
 type HazardType = "cliff" | "water" | "steep" | "impassable" | "other";
 
@@ -62,6 +62,7 @@ interface SavedMap {
   control: ControlPoint[];
   declination: number;
   hazards?: Hazard[];
+  route?: Pixel[];
 }
 
 const STORAGE_KEY = "azimuth.map.v1";
@@ -72,6 +73,7 @@ export default function MapPage() {
   const [mode, setMode] = useState<Mode>("calibrate");
   const [control, setControl] = useState<ControlPoint[]>([]);
   const [measure, setMeasure] = useState<Pixel[]>([]);
+  const [route, setRoute] = useState<Pixel[]>([]);
   const [hazards, setHazards] = useState<Hazard[]>([]);
   const [hazardType, setHazardType] = useState<HazardType>("cliff");
   const [terrain, setTerrain] = useState<TerrainAnalysis | null>(null);
@@ -85,7 +87,9 @@ export default function MapPage() {
   const [pending, setPending] = useState<Pixel | null>(null);
   const [entering, setEntering] = useState<Pixel | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [following, setFollowing] = useState(false);
+  // Live "walk it" compass: "single" = the measured objective, "route" = the
+  // marked waypoints walked one after another. null = closed.
+  const [follow, setFollow] = useState<null | "single" | "route">(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const watchId = useRef<number | null>(null);
@@ -130,6 +134,7 @@ export default function MapPage() {
         setSrc(saved.src);
         setControl(saved.control || []);
         setHazards(saved.hazards || []);
+        setRoute(saved.route || []);
         if (typeof saved.declination === "number") setDeclination(saved.declination);
         setMode("measure");
       }
@@ -151,6 +156,7 @@ export default function MapPage() {
         control: next.control ?? control,
         declination: next.declination ?? declination,
         hazards: next.hazards ?? hazards,
+        route: next.route ?? route,
       };
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -158,7 +164,7 @@ export default function MapPage() {
         flash("Map too large to save offline — it stays loaded until reload.");
       }
     },
-    [src, control, declination, hazards, flash],
+    [src, control, declination, hazards, route, flash],
   );
 
   // ---- image loading ----
@@ -174,11 +180,12 @@ export default function MapPage() {
         setSrc(dataUrl);
         setControl([]);
         setMeasure([]);
+        setRoute([]);
         setHazards([]);
         setTerrain(null);
         setMode("calibrate");
         fitToContainer(img.naturalWidth, img.naturalHeight);
-        persist({ src: dataUrl, control: [], hazards: [] });
+        persist({ src: dataUrl, control: [], hazards: [], route: [] });
       };
       img.src = dataUrl;
     };
@@ -238,6 +245,7 @@ export default function MapPage() {
     setSrc("/sample-topo.svg");
     setControl(demo);
     setMeasure([]);
+    setRoute([]);
     setHazards([]);
     setTerrain(null);
     setMode("measure");
@@ -354,6 +362,14 @@ export default function MapPage() {
     if (p.x < 0 || p.y < 0 || p.x > natural.w || p.y > natural.h) return;
     if (mode === "calibrate") {
       setPending(p);
+    } else if (mode === "route") {
+      // Tap an existing waypoint to remove it; otherwise append to the route.
+      const hitIdx = route.findIndex(
+        (w) => Math.hypot(w.x - p.x, w.y - p.y) < 18 / view.scale,
+      );
+      const next = hitIdx >= 0 ? route.filter((_, i) => i !== hitIdx) : [...route, p];
+      setRoute(next);
+      persist({ route: next });
     } else if (mode === "hazard") {
       // Tap an existing hazard to remove it; otherwise drop a new one.
       const hitIdx = hazards.findIndex(
@@ -471,9 +487,30 @@ export default function MapPage() {
       })
     : null;
 
-  // Open the live "walk it" compass: get orientation permission (iOS needs the
-  // gesture), make sure GPS is live so distance counts down, then show it.
-  async function openFollow() {
+  // The marked route as real-world targets (in tapped order) for sequential nav.
+  const routeTargets: { ll: LatLon; label: string }[] =
+    transform && route.length
+      ? route.map((p) => {
+          const w = pixelToWorld(transform, p);
+          const ll = utmToLatLon({
+            zone: DEFAULT_REGION.utmZone,
+            hemisphere: "N",
+            easting: w.easting,
+            northing: w.northing,
+          });
+          return { ll, label: latLonToMGRS(ll.lat, ll.lon, 5) };
+        })
+      : [];
+
+  const followTargets =
+    follow === "route"
+      ? routeTargets
+      : follow === "single" && objectiveLL
+      ? [{ ll: objectiveLL, label: latLonToMGRS(objectiveLL.lat, objectiveLL.lon, 5) }]
+      : [];
+
+  // Get device-orientation permission (iOS needs the gesture) + live GPS, then open.
+  async function requestHeadingAndGps() {
     const doe = DeviceOrientationEvent as unknown as {
       requestPermission?: () => Promise<string>;
     };
@@ -483,7 +520,18 @@ export default function MapPage() {
       /* heading is optional — the magnetic bearing still shows */
     }
     if (watchId.current == null) toggleGps();
-    setFollowing(true);
+  }
+  async function openFollow() {
+    await requestHeadingAndGps();
+    setFollow("single");
+  }
+  async function openRoute() {
+    if (!routeTargets.length) {
+      flash("Mark at least one waypoint in Route mode first.");
+      return;
+    }
+    await requestHeadingAndGps();
+    setFollow("route");
   }
 
   // Hazards within a corridor (~60 m) of the measured azimuth line.
@@ -505,6 +553,7 @@ export default function MapPage() {
     setNatural(null);
     setControl([]);
     setMeasure([]);
+    setRoute([]);
     setHazards([]);
     setTerrain(null);
     setGpsWorld(null);
@@ -542,18 +591,25 @@ export default function MapPage() {
           {/* mode + calibration status */}
           <div className="ln-panel p-3 space-y-3">
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="grid grid-cols-3 gap-1">
-                <button className={mode === "calibrate" ? "ln-btn text-sm" : "ln-btn-ghost text-sm"} onClick={() => setMode("calibrate")}>
+              <div className="grid grid-cols-4 gap-1">
+                <button className={mode === "calibrate" ? "ln-btn text-xs" : "ln-btn-ghost text-xs"} onClick={() => setMode("calibrate")}>
                   Calibrate
                 </button>
                 <button
-                  className={mode === "measure" ? "ln-btn text-sm" : "ln-btn-ghost text-sm"}
+                  className={mode === "measure" ? "ln-btn text-xs" : "ln-btn-ghost text-xs"}
                   onClick={() => setMode("measure")}
                   disabled={!transform}
                 >
                   Measure
                 </button>
-                <button className={mode === "hazard" ? "ln-btn text-sm" : "ln-btn-ghost text-sm"} onClick={() => setMode("hazard")}>
+                <button
+                  className={mode === "route" ? "ln-btn text-xs" : "ln-btn-ghost text-xs"}
+                  onClick={() => setMode("route")}
+                  disabled={!transform}
+                >
+                  Route
+                </button>
+                <button className={mode === "hazard" ? "ln-btn text-xs" : "ln-btn-ghost text-xs"} onClick={() => setMode("hazard")}>
                   Hazards
                 </button>
               </div>
@@ -639,6 +695,26 @@ export default function MapPage() {
                     <circle key={i} cx={p.x} cy={p.y} r={7 / view.scale} fill="var(--ln-amber)" stroke="#000" strokeWidth={1.5 / view.scale} />
                   ))}
 
+                  {/* route: connecting leg lines + numbered waypoints (walk order) */}
+                  {route.length > 1 && (
+                    <polyline
+                      points={route.map((w) => `${w.x},${w.y}`).join(" ")}
+                      fill="none"
+                      stroke="var(--ln-blue)"
+                      strokeWidth={2 / view.scale}
+                      strokeDasharray={`${8 / view.scale} ${5 / view.scale}`}
+                      strokeOpacity={0.85}
+                    />
+                  )}
+                  {route.map((w, i) => (
+                    <g key={`w${i}`}>
+                      <circle cx={w.x} cy={w.y} r={11 / view.scale} fill="var(--ln-blue)" fillOpacity={0.9} stroke="#000" strokeWidth={1.5 / view.scale} />
+                      <text x={w.x} y={w.y + 5 / view.scale} textAnchor="middle" fontSize={13 / view.scale} fill="#0e120a" fontWeight="bold" className="ln-mono">
+                        {i + 1}
+                      </text>
+                    </g>
+                  ))}
+
                   {/* control points */}
                   {control.map((c, i) => (
                     <g key={i}>
@@ -694,6 +770,10 @@ export default function MapPage() {
                 ? `Tap a known grid point (${control.length}/2+)`
                 : mode === "hazard"
                 ? "Tap to drop a hazard · tap one to remove"
+                : mode === "route"
+                ? transform
+                  ? `Tap to drop waypoints in order (${route.length}) · tap one to remove`
+                  : "Calibrate first"
                 : transform
                 ? "Tap start, then objective"
                 : "Calibrate first"}
@@ -705,16 +785,60 @@ export default function MapPage() {
             <button className="ln-btn" onClick={toggleGps}>
               {gpsActive ? "Stop GPS" : "Plot my GPS"}
             </button>
-            {mode === "measure" && gpsPixel ? (
-              <button className="ln-btn-ghost" onClick={() => setMeasure([gpsPixel])}>
-                Start from GPS, tap objective
+            {mode === "route" ? (
+              <button className="ln-btn" onClick={openRoute} disabled={!gpsPixel || route.length === 0}>
+                Start route from GPS →
               </button>
             ) : (
-              <button className="ln-btn-ghost" onClick={() => setMeasure([])} disabled={mode !== "measure"}>
+              <button
+                className="ln-btn-ghost"
+                onClick={() => setMeasure([])}
+                disabled={mode !== "measure" || measure.length === 0}
+              >
                 Clear measurement
               </button>
             )}
           </div>
+
+          {/* route waypoint list */}
+          {mode === "route" && route.length > 0 && (
+            <div className="ln-panel p-4 space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h3 className="font-semibold">Route · {route.length} waypoint{route.length > 1 ? "s" : ""}</h3>
+                <button
+                  className="text-xs text-[var(--ln-red)]"
+                  onClick={() => {
+                    setRoute([]);
+                    persist({ route: [] });
+                  }}
+                >
+                  Clear route
+                </button>
+              </div>
+              {routeTargets.map((t, i) => (
+                <div key={i} className="ln-panel-2 px-3 py-2 flex items-center justify-between">
+                  <div className="ln-mono text-sm">
+                    <span className="text-[var(--ln-blue)]">{i + 1}.</span> {t.label}
+                  </div>
+                  <button
+                    className="text-xs text-[var(--ln-red)]"
+                    onClick={() => {
+                      const next = route.filter((_, idx) => idx !== i);
+                      setRoute(next);
+                      persist({ route: next });
+                    }}
+                  >
+                    remove
+                  </button>
+                </div>
+              ))}
+              <p className="text-[11px] text-[var(--ln-muted)]">
+                {gpsPixel
+                  ? "Hit Start route from GPS — the compass walks you to each in order and auto-advances as you arrive."
+                  : "Turn on Plot my GPS, then Start route from GPS."}
+              </p>
+            </div>
+          )}
 
           {/* tapped-point coordinates — immediate read-back after calibration */}
           {tappedCoords.length > 0 && (
@@ -906,14 +1030,15 @@ export default function MapPage() {
         </div>
       )}
 
-      {following && objectiveLL && (
+      {follow && followTargets.length > 0 && (
         <FollowCompass
-          objective={objectiveLL}
-          objectiveLabel={latLonToMGRS(objectiveLL.lat, objectiveLL.lon, 5)}
+          targets={followTargets}
+          isRoute={follow === "route"}
           gps={gpsLL}
-          gridAzimuth={measureResult?.azimuth ?? 0}
+          gpsAcc={gpsWorld?.acc ?? null}
+          gridAzimuthFallback={follow === "single" ? measureResult?.azimuth ?? 0 : null}
           declination={declination}
-          onClose={() => setFollowing(false)}
+          onClose={() => setFollow(null)}
         />
       )}
 
@@ -924,32 +1049,46 @@ export default function MapPage() {
   );
 }
 
-// Live "walk it" compass: slaves a needle to the azimuth you measured on the map.
-// With live GPS it recomputes the bearing + distance to the objective as you move;
-// without it, it falls back to the fixed magnetic bearing off the map line.
+const ARRIVE_M = 15; // auto-advance / "arrived" radius, matches the Go To navigator
+
+// Live "walk it" compass. One target (the measured objective) or a whole route
+// walked in order: with live GPS it recomputes the bearing + distance as you move
+// and auto-advances to the next waypoint within ARRIVE_M. Heading is low-pass
+// smoothed so the needle doesn't jitter. No GPS → the fixed magnetic bearing to set.
 function FollowCompass({
-  objective,
-  objectiveLabel,
+  targets,
+  isRoute,
   gps,
-  gridAzimuth,
+  gpsAcc,
+  gridAzimuthFallback,
   declination,
   onClose,
 }: {
-  objective: LatLon;
-  objectiveLabel: string;
+  targets: { ll: LatLon; label: string }[];
+  isRoute: boolean;
   gps: LatLon | null;
-  gridAzimuth: number;
+  gpsAcc: number | null;
+  gridAzimuthFallback: number | null;
   declination: number;
   onClose: () => void;
 }) {
   const [heading, setHeading] = useState<number | null>(null);
+  const [idx, setIdx] = useState(0);
+  const [done, setDone] = useState(false);
+  const headingRef = useRef<number | null>(null);
 
   useEffect(() => {
     function handle(e: DeviceOrientationEvent & { webkitCompassHeading?: number }) {
       let h: number | null = null;
       if (typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;
       else if (typeof e.alpha === "number") h = norm360(360 - e.alpha);
-      if (h != null) setHeading(h);
+      if (h == null) return;
+      // Circular low-pass so the needle is steady but still responsive.
+      const prev = headingRef.current;
+      const next =
+        prev == null ? h : norm360(prev + 0.25 * (((h - prev + 540) % 360) - 180));
+      headingRef.current = next;
+      setHeading(next);
     }
     window.addEventListener("deviceorientationabsolute", handle as EventListener);
     window.addEventListener("deviceorientation", handle as EventListener);
@@ -959,92 +1098,148 @@ function FollowCompass({
     };
   }, []);
 
-  // Bearing to the objective: live off GPS if we have it, else the fixed map line.
+  const safeIdx = Math.min(idx, targets.length - 1);
+  const target = targets[safeIdx];
+
+  // Auto-advance through the route as each waypoint is reached.
+  useEffect(() => {
+    if (!gps || !target) return;
+    if (haversine(gps, target.ll) <= ARRIVE_M) {
+      if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate([120, 60, 120]);
+      if (safeIdx < targets.length - 1) setIdx(safeIdx + 1);
+      else setDone(true);
+    }
+  }, [gps, safeIdx, target, targets.length]);
+
+  // Bearing to the current target: live off GPS, else the fixed measured line.
   let magBearing: number;
   let distance: number | null = null;
   let live = false;
-  if (gps) {
-    const trueBearing = initialBearing(gps, objective);
-    magBearing = norm360(trueBearing - DEFAULT_REGION.declination);
-    distance = haversine(gps, objective);
+  if (gps && target) {
+    magBearing = norm360(initialBearing(gps, target.ll) - DEFAULT_REGION.declination);
+    distance = haversine(gps, target.ll);
     live = true;
   } else {
-    magBearing = gridToMagnetic(gridAzimuth, declination);
+    magBearing = gridToMagnetic(gridAzimuthFallback ?? 0, declination);
   }
   const hasHeading = heading != null;
-  // How far to turn: 0 = objective is straight ahead (top of phone).
   const arrow = hasHeading ? norm360(magBearing - heading) : magBearing;
+  const arrived = live && distance != null && distance <= ARRIVE_M;
+  const title = isRoute
+    ? `Waypoint ${safeIdx + 1} of ${targets.length}`
+    : "Walk to objective";
 
   return (
     <div className="fixed inset-0 z-50 bg-[var(--ln-bg,#0e120a)] flex flex-col items-center p-5 overflow-y-auto">
       <div className="w-full max-w-md flex items-center justify-between">
-        <h2 className="font-semibold text-lg">Walk to objective</h2>
+        <h2 className="font-semibold text-lg">{title}</h2>
         <button className="ln-btn-ghost" onClick={onClose}>Close</button>
       </div>
 
-      <div
-        className="w-full max-w-md ln-panel p-2 text-center text-sm font-semibold mt-3"
-        style={{
-          color: hasHeading ? "var(--ln-od-bright)" : "var(--ln-amber)",
-          borderColor: hasHeading ? "var(--ln-od)" : "var(--ln-amber)",
-        }}
-      >
-        {hasHeading
-          ? "● LIVE HEADING — turn until the arrow points straight up"
-          : "▲ NO COMPASS SENSOR — set the magnetic bearing below on a compass"}
-      </div>
-
-      <div className="relative w-72 h-72 my-6">
-        <div className="absolute inset-0 rounded-full border-2 border-[var(--ln-line)] bg-[var(--ln-panel-2)]" />
-        <div className="absolute left-1/2 top-2 -translate-x-1/2 text-[var(--ln-amber)]">▲</div>
-        <div
-          className="absolute inset-0 flex items-center justify-center"
-          style={{ transform: `rotate(${arrow}deg)`, transition: "transform 0.15s ease-out" }}
-        >
-          <svg viewBox="0 0 100 100" className="w-48 h-48">
-            <polygon points="50,8 70,60 50,48 30,60" fill="var(--ln-od-bright)" />
-            <rect x="46" y="48" width="8" height="40" rx="3" fill="var(--ln-od)" />
-          </svg>
+      {done ? (
+        <div className="w-full max-w-md ln-panel p-6 text-center mt-6" style={{ borderColor: "var(--ln-od)" }}>
+          <div className="text-4xl mb-2">✓</div>
+          <div className="font-semibold text-lg text-[var(--ln-od-bright)]">Route complete</div>
+          <p className="text-sm text-[var(--ln-muted)] mt-1">
+            Reached the last waypoint. Close to return to the map.
+          </p>
+          <button className="ln-btn w-full mt-4" onClick={onClose}>Done</button>
         </div>
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-24">
-          <div className="text-3xl font-bold ln-mono ln-stat">
-            {distance != null ? formatMeters(distance) : "—"}
+      ) : (
+        <>
+          <div
+            className="w-full max-w-md ln-panel p-2 text-center text-sm font-semibold mt-3"
+            style={{
+              color: arrived ? "var(--ln-od-bright)" : hasHeading ? "var(--ln-od-bright)" : "var(--ln-amber)",
+              borderColor: arrived ? "var(--ln-od)" : hasHeading ? "var(--ln-od)" : "var(--ln-amber)",
+            }}
+          >
+            {arrived
+              ? `● ON THE POINT (±${ARRIVE_M} m)${isRoute && safeIdx < targets.length - 1 ? " — advancing…" : ""}`
+              : hasHeading
+              ? "● LIVE HEADING — turn until the arrow points straight up"
+              : "▲ NO COMPASS SENSOR — set the magnetic bearing below on a compass"}
+            {live && gpsAcc != null && (
+              <span className="ml-2 font-normal" style={{ color: gpsAcc > 25 ? "var(--ln-amber)" : "var(--ln-muted)" }}>
+                · GPS ±{Math.round(gpsAcc)} m{gpsAcc > 25 ? " (degraded)" : ""}
+              </span>
+            )}
           </div>
-        </div>
-      </div>
 
-      <div className="grid grid-cols-3 gap-3 w-full max-w-md text-center">
-        <div className="ln-panel-2 p-2">
-          <div className="ln-label">Magnetic</div>
-          <div className="ln-mono ln-stat text-lg text-[var(--ln-amber)]">{Math.round(magBearing)}°</div>
-        </div>
-        <div className="ln-panel-2 p-2">
-          <div className="ln-label">Direction</div>
-          <div className="ln-mono ln-stat text-lg">{compassPoint(magBearing)}</div>
-        </div>
-        <div className="ln-panel-2 p-2">
-          <div className="ln-label">{live ? "Distance" : "Heading"}</div>
-          <div className="ln-mono ln-stat text-lg">
-            {live ? (distance != null ? formatMeters(distance) : "—") : hasHeading ? `${Math.round(heading!)}°` : "—"}
+          <div className="relative w-72 h-72 my-6">
+            <div className="absolute inset-0 rounded-full border-2 border-[var(--ln-line)] bg-[var(--ln-panel-2)]" />
+            <div className="absolute left-1/2 top-2 -translate-x-1/2 text-[var(--ln-amber)]">▲</div>
+            <div
+              className="absolute inset-0 flex items-center justify-center"
+              style={{ transform: `rotate(${arrow}deg)`, transition: "transform 0.15s ease-out" }}
+            >
+              <svg viewBox="0 0 100 100" className="w-48 h-48">
+                <polygon points="50,8 70,60 50,48 30,60" fill="var(--ln-od-bright)" />
+                <rect x="46" y="48" width="8" height="40" rx="3" fill="var(--ln-od)" />
+              </svg>
+            </div>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-24">
+              <div className="text-3xl font-bold ln-mono ln-stat">
+                {distance != null ? formatMeters(distance) : "—"}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <div className="w-full max-w-md ln-panel-2 p-2 text-center mt-3">
-        <div className="ln-label">Objective</div>
-        <div className="ln-mono text-sm break-all">{objectiveLabel}</div>
-      </div>
+          <div className="grid grid-cols-3 gap-3 w-full max-w-md text-center">
+            <div className="ln-panel-2 p-2">
+              <div className="ln-label">Magnetic</div>
+              <div className="ln-mono ln-stat text-lg text-[var(--ln-amber)]">{Math.round(magBearing)}°</div>
+            </div>
+            <div className="ln-panel-2 p-2">
+              <div className="ln-label">Direction</div>
+              <div className="ln-mono ln-stat text-lg">{compassPoint(magBearing)}</div>
+            </div>
+            <div className="ln-panel-2 p-2">
+              <div className="ln-label">{live ? "Distance" : "Heading"}</div>
+              <div className="ln-mono ln-stat text-lg">
+                {live ? (distance != null ? formatMeters(distance) : "—") : hasHeading ? `${Math.round(heading!)}°` : "—"}
+              </div>
+            </div>
+          </div>
 
-      {!live && (
-        <p className="text-[11px] text-[var(--ln-amber)] mt-3 text-center max-w-md">
-          GPS is off, so distance can&apos;t count down. Turn on <strong>Plot my GPS</strong> for
-          live guidance, or set {Math.round(magBearing)}° on your compass and follow it.
-        </p>
+          <div className="w-full max-w-md ln-panel-2 p-2 text-center mt-3">
+            <div className="ln-label">{isRoute ? `Waypoint ${safeIdx + 1}` : "Objective"}</div>
+            <div className="ln-mono text-sm break-all">{target?.label}</div>
+          </div>
+
+          {isRoute && targets.length > 1 && (
+            <div className="grid grid-cols-2 gap-2 w-full max-w-md mt-3">
+              <button
+                className="ln-btn-ghost"
+                onClick={() => setIdx(Math.max(0, safeIdx - 1))}
+                disabled={safeIdx === 0}
+              >
+                ◂ Previous
+              </button>
+              <button
+                className="ln-btn-ghost"
+                onClick={() => {
+                  if (safeIdx < targets.length - 1) setIdx(safeIdx + 1);
+                  else setDone(true);
+                }}
+              >
+                {safeIdx < targets.length - 1 ? "Skip ▸" : "Finish ✓"}
+              </button>
+            </div>
+          )}
+
+          {!live && (
+            <p className="text-[11px] text-[var(--ln-amber)] mt-3 text-center max-w-md">
+              GPS is off, so distance can&apos;t count down. Turn on <strong>Plot my GPS</strong> for
+              live guidance, or set {Math.round(magBearing)}° on your compass and follow it.
+            </p>
+          )}
+          <p className="text-[11px] text-[var(--ln-muted)] mt-2 text-center max-w-md">
+            Hold the phone flat, away from metal. Phone compasses drift 10–20° — confirm
+            against a lensatic compass before you rely on it.
+          </p>
+        </>
       )}
-      <p className="text-[11px] text-[var(--ln-muted)] mt-2 text-center max-w-md">
-        Hold the phone flat, away from metal. Phone compasses drift 10–20° — confirm
-        against a lensatic compass before you rely on it.
-      </p>
     </div>
   );
 }
